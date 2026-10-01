@@ -32,7 +32,7 @@ const WORD_NUMBERS = {
 const NUMWORD = `(\\d+|${Object.keys(WORD_NUMBERS).join('|')})`;
 const toNumber = (w) => (/^\d+$/.test(w) ? Number(w) : WORD_NUMBERS[w.toLowerCase()]);
 
-const RECORD_NOUNS = 'records?|rows?|readings?|entries|entry|events?|samples?|logs?|data\\s*points?|observations?|measurements?|details|data';
+const RECORD_NOUNS = 'records?|rows?|readings?|entries|entry|events?|samples?|logs?|data\\s*points?|observations?|measurements?|details|data|plots?|detections?|target\\s+reports?|reports|hits|returns|messages';
 
 // Words that carry no meaning on their own. Anything not in here (and not otherwise
 // understood) is reported back as "not understood" and lowers confidence.
@@ -52,6 +52,7 @@ trend trends trending over time series timeline distribution histogram frequency
 sort sorted order ordered rank ranked ascending descending asc desc limit
 near nearest closest around close nearby radius km kms kilometer kilometers kilometre kilometres meter meters metre metres mile miles
 having except excluding exclude excluded other without non only
+plot plots detection detections report reports hits returns messages radar radars
 recorded observed measured captured logged reported seen happened occurred occur happen got received generated
 `.split(/\s+/).filter(Boolean));
 
@@ -82,6 +83,7 @@ function aliasesFor(col, schema) {
   const base = spaced.replace(/\s+(id|code|name|no|number|type|key)$/, '');
   if (base !== spaced && base.length > 2) out.add(base);
 
+  for (const a of col.aliases ?? []) out.add(a.toLowerCase());
   if (name === schema.timeColumn) ['time', 'timestamp', 'date', 'datetime', 'date time'].forEach((a) => out.add(a));
   if (name === schema.latColumn) ['lat', 'latitude'].forEach((a) => out.add(a));
   if (name === schema.lonColumn) ['lon', 'lng', 'longitude'].forEach((a) => out.add(a));
@@ -148,9 +150,10 @@ function replaceAll(st, re, fn) {
   });
 }
 
-function addWhere(st, sql, desc) {
+function addWhere(st, sql, desc, kind = 'value') {
   st.where.push(sql);
   st.whereDesc.push(desc);
+  st.whereKinds.push(kind);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -301,7 +304,7 @@ function extractTime(st, schema, anchor, dateOrder) {
     const parts = [];
     if (start) parts.push(`${t} >= ${lit(start)}`);
     if (end) parts.push(`${t} < ${lit(end)}`);
-    addWhere(st, parts.join(' AND '), `${timeCol} ${label}`);
+    addWhere(st, parts.join(' AND '), `${timeCol} ${label}`, 'time');
     st.timeWindow = { start: start ?? st.timeWindow?.start, end: end ?? st.timeWindow?.end };
     return tok('T');
   };
@@ -359,6 +362,7 @@ function extractGeo(st, schema) {
       st,
       `${la} BETWEEN ${lat - dLat} AND ${lat + dLat} AND ${lo} BETWEEN ${lon - dLon} AND ${lon + dLon} AND ${st.geo.distanceExpr} <= ${radiusKm}`,
       `within ${+radiusKm.toFixed(3)} km of (${lat}, ${lon})`,
+      'geo',
     );
   }
 }
@@ -404,11 +408,31 @@ function extractComparisons(st, schema) {
     if (op === 'between') {
       if (b == null) return null;
       const [lo, hi] = [Math.min(+a, +b), Math.max(+a, +b)];
-      addWhere(st, `${c} BETWEEN ${lo} AND ${hi}`, `${col.name} between ${lo} and ${hi}`);
+      addWhere(st, `${c} BETWEEN ${lo} AND ${hi}`, `${col.name} between ${lo} and ${hi}`, 'compare');
     } else {
-      addWhere(st, `${c} ${op} ${+a}`, `${col.name} ${op} ${+a}`);
+      addWhere(st, `${c} ${op} ${+a}`, `${col.name} ${op} ${+a}`, 'compare');
     }
     st.filterCols.add(idx);
+    return tok('F');
+  });
+  // aviation style, operator first: "below FL 50", "above flight level 300"
+  const PRE_OPS = OPS.filter(([op]) => ['>', '<', '>=', '<='].includes(op));
+  replaceAll(st, new RegExp(`\\b(?:${PRE_OPS.map(([, re]) => `(${re})`).join('|')})\\s+${COL}\\s*${NUM}`, 'gi'), (...args) => {
+    const opIdx = args.slice(1, 1 + PRE_OPS.length).findIndex(Boolean);
+    const idx = +args[1 + PRE_OPS.length];
+    const n = +args[2 + PRE_OPS.length];
+    const col = cols[idx];
+    if (opIdx < 0 || col.kind !== 'numeric') return null;
+    const op = PRE_OPS[opIdx][0];
+    addWhere(st, `${qi(col.name)} ${op} ${n}`, `${col.name} ${op} ${n}`, 'compare');
+    st.filterCols.add(idx);
+    return tok('F');
+  });
+  replaceAll(st, new RegExp(`${COL}\\s+(?:no\\.?\\s*|number\\s+|#\\s*|id\\s+)?(\\d+)\\b(?!\\s*(?:%|${L}|seconds?|minutes?|hours?|days?|weeks?|months?|years?|km|nm|ft|kt))`, 'gi'), (m, i, n) => {
+    const col = cols[+i];
+    if (col.kind !== 'numeric' || !/INT/.test(col.type) || !/number|_id$|_no$|code|^id$/i.test(col.name)) return null;
+    addWhere(st, `${qi(col.name)} = ${+n}`, `${col.name} = ${+n}`);
+    st.filterCols.add(+i);
     return tok('F');
   });
 }
@@ -442,8 +466,9 @@ function extractTextFilters(st, schema) {
     return tok('F');
   });
   replaceAll(st, new RegExp(`${COL}\\s*(?:(?:=|==|:|equals?)\\s*([\\w\\-.:/]+)|(?:no\\.?|number|#)?\\s*([A-Za-z]*\\d[\\w\\-.:/]*))`, 'gi'), (_, i, v1, v2) => {
-    if (cols[+i].kind !== 'text' && !(cols[+i].kind === 'category' && v1)) return null;
     const v = v1 ?? v2;
+    const knownValue = cols[+i].kind === 'category' && cols[+i].values?.some((x) => String(x).toLowerCase() === v.toLowerCase());
+    if (cols[+i].kind !== 'text' && !(cols[+i].kind === 'category' && (v1 || knownValue))) return null;
     addWhere(st, `${qi(cols[i].name)} ILIKE ${ql(like(v))} ESCAPE '\\'`, `${cols[i].name} = "${v}"`);
     st.filterCols.add(+i);
     return tok('F');
@@ -641,6 +666,7 @@ export function parseQuestion(question, schema, options = {}) {
     text: ` ${String(question).replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim()} `,
     where: [],
     whereDesc: [],
+    whereKinds: [],
     filterCols: new Set(),
     groupCols: [],
     superlatives: [],
@@ -877,7 +903,7 @@ export function parseQuestion(question, schema, options = {}) {
     if (bucketAlias && !st.whichTime) {
       chart = { type: 'line', x: bucketAlias, y: groupNames.length ? [first] : measureCols, series: groupNames[0] ?? null };
     } else if (groupNames.length || bucketAlias) {
-      chart = { type: 'bar', x: groupNames[0] ?? bucketAlias, y: measureCols.slice(0, 3) };
+      chart = { type: 'bar', x: groupNames[0] ?? bucketAlias, y: measureCols.slice(0, 3), labels: groupNames.length > 1 ? groupNames : undefined };
     } else {
       chart = { type: 'stat' };
     }
@@ -936,6 +962,7 @@ export function parseQuestion(question, schema, options = {}) {
       interpretation: describe.join(' · '),
       notes,
       filters: st.whereDesc,
+      whereParts: st.where.map((sql, i) => ({ sql, desc: st.whereDesc[i], kind: st.whereKinds[i] })),
       anchor: formatTs(anchor),
     };
   }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ask, getLlmStatus, getSchema, runSql } from './api.js';
+import { ask, getLlmStatus, getSchema, getStatus, runSql } from './api.js';
 import Sidebar from './components/Sidebar.jsx';
 import AnswerCard from './components/AnswerCard.jsx';
 
@@ -25,9 +25,43 @@ export default function App() {
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
 
+  const [status, setStatus] = useState(null);
+  const liveRef = useRef(new Map());
+
   useEffect(() => {
     getSchema().then(setSchema).catch((e) => setSchemaError(e.message));
   }, []);
+
+  // Poll for new data written to the database; re-run "live" answers when it changes.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  useEffect(() => {
+    const tick = async () => {
+      let s;
+      try {
+        s = await getStatus();
+      } catch {
+        return;
+      }
+      setStatus(s);
+      for (const it of itemsRef.current) {
+        if (!it.live || it.dataVersion === s.dataVersion || liveRef.current.get(it.id)) continue;
+        liveRef.current.set(it.id, true);
+        ask(it.question, 'rules')
+          .then((response) =>
+            setItems((p) => p.map((x) => (x.id === it.id ? { ...x, response, dataVersion: s.dataVersion, updatedAt: new Date() } : x))),
+          )
+          .catch(() => {})
+          .finally(() => liveRef.current.delete(it.id));
+      }
+    };
+    tick();
+    const id = setInterval(tick, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  const toggleLive = (id) =>
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, live: !it.live, dataVersion: status?.dataVersion } : it)));
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -56,7 +90,7 @@ export default function App() {
     try {
       const response = await ask(q, mode);
       response.roundTripMs = Math.round(performance.now() - started);
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, loading: false, response } : it)));
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, loading: false, response, dataVersion: status?.dataVersion } : it)));
     } catch (err) {
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, loading: false, error: err.message } : it)));
     } finally {
@@ -99,20 +133,21 @@ export default function App() {
 
   return (
     <div className="layout">
-      <Sidebar schema={schema} error={schemaError} onPick={(q) => submit(q)} history={history} onRefreshLlm={refreshLlm} />
+      <Sidebar schema={schema} status={status} error={schemaError} onPick={(q) => submit(q)} history={history} onRefreshLlm={refreshLlm} />
       <main className="main">
         <div className="stream">
           {!items.length && (
             <div className="empty">
-              <h1>Ask anything about your machine data</h1>
+              <h1>Ask anything about your {schema?.radar ? 'radar' : 'machine'} data</h1>
               <p>
                 Questions are answered from the local database — nothing leaves this computer. Try one of the examples on the
-                left, or type e.g. <em>“average max value per day for Pune last month”</em>.
+                left, or type e.g.{' '}
+                <em>{schema?.radar ? '“probability of detection by sensor yesterday”' : '“average max value per day for Pune last month”'}</em>.
               </p>
             </div>
           )}
           {items.map((it) => (
-            <AnswerCard key={it.id} item={it} onRunSql={submitSql} onAskAgain={(q, mode) => submit(q, mode)} llm={schema?.llm} />
+            <AnswerCard key={it.id} item={it} onToggleLive={() => toggleLive(it.id)} onRunSql={submitSql} onAskAgain={(q, mode) => submit(q, mode)} llm={schema?.llm} />
           ))}
           <div ref={bottomRef} />
         </div>

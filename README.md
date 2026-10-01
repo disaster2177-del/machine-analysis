@@ -1,102 +1,111 @@
-# Machine Analysis: offline Q&A over crores of readings
+# Radar Analysis: offline Q&A over crores of radar plots
 
-Ask questions about your machine data in plain English from a React UI, for example *"average max value by site last month"*, *"which machine had the most errors in June"* or *"readings within 5 km of 18.52, 73.85"*. You get an answer, a chart, the table and the SQL that was run.
+Ask questions about your radar data in plain English from a React UI. For example: *"probability of detection by sensor yesterday"*, *"registration bias between sensors"*, *"any emergency squawks?"*, *"coverage of Mumbai radar"* or *"plots below FL 50 within 30 km of 19.09, 72.87"*. Each answer comes with a chart, the table and the SQL that was run.
 
-- **Fully offline.** Nothing leaves the machine: no cloud APIs, map tiles, CDNs or web fonts.
-- **Fast.** The data lives in [DuckDB](https://duckdb.org), an embedded columnar engine. On a 5 crore (50,000,000) row table on a 4-core machine, typical questions take 5–400 ms and repeated questions are served from cache.
-- **React** frontend and **Node.js (Express)** backend. Both run on one port in production.
+- **Radar data standard.** Plots follow **EUROCONTROL ASTERIX Category 048** (monoradar target reports). The field list is in [docs/RADAR_DATA_FORMAT.md](docs/RADAR_DATA_FORMAT.md).
+- **Multiple sensors** in one table. Every analysis can be broken down by sensor or compared across sensors.
+- **Works on your live DuckDB file.** The app reads the database your ingest pipeline writes and picks up new data automatically. Answers marked *Live* re-run on their own.
+- **Fully offline.** No cloud APIs, map tiles, CDNs or web fonts.
+- **Fast.** DuckDB, an embedded columnar engine, holds the data. See [Performance](#performance).
+- **React** frontend and **Node.js (Express)** backend, served together on one port.
 
-## How it answers questions
-
-```
-React UI ──► POST /api/ask ──► rule-based NL→SQL engine (≈1 ms, no model needed)
-                                     │ confidence high? ──► DuckDB (read-only) ──► answer + chart + table + SQL
-                                     │ not sure?
-                                     └──► optional local LLM (Ollama / llama.cpp / LM Studio) writes SQL
-                                           └─► SQL guard ──► DuckDB ──► answer
-```
-
-1. **Rule engine** (`backend/src/nlq/ruleParser.js`). It reads your schema at startup. It learns column names, synonyms ("max value" → `max_value`, "machine" → `machine_id`) and every value of the low-cardinality text columns ("Pune", "ERROR", "temperature"). It understands:
-   - aggregations: count, average, sum, min, max, median, std deviation, percentiles, distinct counts
-   - grouping: *by site*, *per machine*, *status wise*, *for each sensor*, *which machine…*, *top 10 machines…*
-   - time: *daily / hourly / monthly*, *trend*, *last 7 days*, *yesterday*, *this month*, *in March 2025*, *between 2025-02-01 and 2025-02-15*, *since 1st June*, *Q2 2025*, *05/03/2025*
-   - filters: values anywhere in the question, *excluding Delhi*, *max value above 90*, *between 10 and 20*, *machine M-0012*, *contains 'abc'*
-   - location: *within 5 km of lat, lon*, *nearest 10 readings to lat, lon*
-   - analysis: summary statistics, distribution / histogram, correlation, *when was the highest …* (returns the full record), *machines with more than 100 errors* (HAVING)
-
-   Each answer shows **"Understood as …"** and a confidence level, so you can check how the question was read. Words it did not understand are listed.
-2. **Local LLM (optional).** If the rule engine is unsure and a local model is running, the question goes to the model with the schema. If the SQL fails, the model gets one chance to fix it. Choose *Rules*, *Local LLM* or *Auto* in the UI.
-3. **Safety.** The database is opened **read-only**, with external file and network access disabled and the configuration locked. SQL from the LLM or the SQL editor must also pass a guard that allows only a single `SELECT`.
+Non-radar tables (for example the machine readings sample) still work with the general question engine. See [Other data](#other-data).
 
 ## Quick start
 
 Requires Node.js 18 or newer (tested on Node 22).
 
 ```bash
-npm run install:all          # backend + frontend dependencies (one time, needs internet)
+npm run install:all                 # dependencies (one time, needs internet)
 
-# Option A: try it with 5 crore synthetic rows (~2.5 min, ~870 MB)
-npm run generate
-#   smaller: npm run generate -- --rows 1000000
+# Try it with simulated radar data: 5 sensors, ~44 lakh plots per simulated day (~90 s per day)
+npm run generate:radar              # 1 day
+npm run generate:radar -- --days 11 # ~5 crore plots
 
-# Option B: import your own data (see "Your data" below)
-
-npm run build                # build the React app
-npm start                    # → http://127.0.0.1:3001
+npm run build                       # build the React app
+npm start                           # → http://127.0.0.1:3001
 ```
 
-After `npm run install:all`, everything runs without internet. To move the app to an air-gapped machine, copy the whole folder, including `node_modules`, the built `frontend/dist` and `backend/data/`.
-
-Development mode with hot reload: run `npm run dev:backend` and `npm run dev:frontend`, then open http://localhost:5173.
-
-## Your data
-
-The importer copies your data into `backend/data/machine.duckdb`. Sorting by the timestamp makes time filters much faster.
+**Using your own DuckDB file:**
 
 ```bash
-# CSV / Parquet exports (no extra downloads)
-npm run ingest -- --csv "/path/to/export/*.csv" --time-column ts
-npm run ingest -- --parquet "/path/to/*.parquet" --time-column ts
-
-# Straight from a database
-npm run ingest -- --postgres "host=localhost dbname=plant user=me password=secret" --source-table public.readings --time-column ts
-npm run ingest -- --mysql "host=localhost database=plant user=me password=secret" --source-table readings --time-column ts
-npm run ingest -- --sqlite /data/plant.db --source-table readings --time-column ts
-
-# Rename columns while importing
-npm run ingest -- --csv data.csv --rename "Timestamp:ts,Latitude:lat,Longitude:lon,MinValue:min_value,MaxValue:max_value"
+DB_PATH=/path/to/radar.duckdb TABLE=radar_plots npm start
 ```
 
-> The `--postgres`, `--mysql` and `--sqlite` options use DuckDB extensions, which are downloaded the first time they are used. Run that import once while online, or copy `~/.duckdb/extensions` from a machine that has them. CSV and Parquet need no extensions.
+If your column names differ from the standard ones, create a view once. You don't need to copy any data. See [docs/RADAR_DATA_FORMAT.md](docs/RADAR_DATA_FORMAT.md#your-table-has-different-column-names).
 
-No column names are hard-coded. The schema is detected automatically:
+## What you can ask
 
-| Role | Auto-detected from | Override |
-|---|---|---|
-| time | first `TIMESTAMP`/`DATE` column (prefers `ts`, `timestamp`, `time`, …) | `TIME_COLUMN` |
-| latitude / longitude | `lat`/`latitude`, `lon`/`lng`/`longitude` | `LAT_COLUMN`, `LON_COLUMN` |
-| categories | text columns with ≤ 20,000 distinct values (their values become filter words) | `MAX_CATEGORY_VALUES` |
-| measures | every numeric column | — |
+### Radar surveillance analyses
 
-The schema scan runs once (a few seconds on 5 crore rows). The result is cached in `machine.duckdb.meta.json` and rebuilt when the database file changes. Restart the server after re-importing.
+| Ask… | What you get |
+|---|---|
+| *Sensor status* · *which sensors are active?* | last plot per sensor, seconds since, plots in the last 5 min, ACTIVE / SILENT |
+| *Probability of detection by sensor* · *missed detections for Pune yesterday* | Pd % per sensor (track-based), missed updates, sensors below the target (`PD_TARGET`, default 97%) |
+| *Scan period of each radar* · *update rate* | median scan period, rpm, 5th/95th percentile update interval |
+| *Data gaps longer than 2 minutes* · *outages of Hyderabad last week* | every period a sensor was silent, longest first, total silent time per sensor |
+| *Registration bias between sensors* | relative azimuth (°) and range (m) bias for every pair of sensors that saw the same aircraft at the same time, and the sensor most likely to be misaligned |
+| *Any emergency squawks?* · *7700 today* | 7500 / 7600 / 7700 events with aircraft, callsign, first/last seen, sensors, last position |
+| *Which aircraft changed their squawk code?* | Mode 3/A code changes per aircraft |
+| *Altitude jumps* · *altitude jumps faster than 6000 ft/min* | implausible Mode C changes between updates, with the levels before and after |
+| *Coverage of Mumbai radar* · *coverage in 5° sectors* | range by azimuth sector, drawn as a polar coverage diagram |
+| *Track statistics per sensor* · *dropped tracks* | track count, median/average duration, short tracks, tracks dropped without the end flag |
+| *Latency by sensor* | average / 95th percentile / maximum delay between detection and reception |
+| *Clutter and false plots by sensor* | ghost plots, unassociated primary plots, false-plot % |
+
+All of these accept filters in the same question: a sensor (*"for Nagpur"*), a period (*"yesterday"*, *"last 6 hours"*, *"between 2026-09-21 and 2026-09-23"*), an aircraft (*"callsign AIC1452"*, *"aircraft 800C4A"*) or an area (*"within 50 km of 19.09, 72.87"*).
+
+Without a period, radar analyses cover the **last 24 hours of data** so they stay fast on crores of plots. Say *"all time"* to cover everything.
+
+### General questions on the same data
+
+The general engine handles everything else:
+
+- *How many plots per sensor?* · *Hourly plot count by sensor* · *Count by report type for each sensor*
+- *How many aircraft did Mumbai radar see yesterday?* · *How many PSR only plots by sensor?*
+- *Average SSR amplitude by sensor* · *Distribution of ground speed* · *Highest flight level recorded*
+- *Show track 1234 of Pune* · *Show latest plots for callsign AIC1452* · *Plots with squawk 2304*
+- *Plots below FL 50 within 30 km of 19.09, 72.87* · *How many aircraft above flight level 300 in Nagpur*
+- *Where was the lowest altitude for Hyderabad* (returns the full record)
+
+The engine knows radar vocabulary. *Squawk* means `mode3a`, *range* means `range_nm`, *altitude* or *FL* means `flight_level`, *aircraft* means `aircraft_address`, *speed* means `ground_speed_kt`, and so on. Every value it has seen in the data also acts as a filter word: sensor names, report types such as *PSR* or *MODES_ROLLCALL*, and climb modes.
+
+Each answer shows **"Understood as …"**, so you can check how the question was read. You can edit and re-run the SQL in the SQL tab.
+
+## How it works
+
+```
+React UI ──► POST /api/ask ──► radar analysis? (Pd, gaps, bias, …) ──► SQL on DuckDB
+                                   │ no
+                                   ▼
+                          rule-based NL→SQL engine (≈1 ms) ──► SQL on DuckDB
+                                   │ not sure?
+                                   ▼
+                          optional local LLM (Ollama / llama.cpp) ──► SQL guard ──► DuckDB
+```
+
+- `backend/src/radar/fields.js`: the ASTERIX CAT048 field definitions and their question vocabulary.
+- `backend/src/radar/analytics.js`: the radar analyses, written as DuckDB SQL (window functions, time-bucketed matching of the same aircraft across sensors).
+- `backend/src/nlq/ruleParser.js`: the general question engine for time ranges, filters, grouping, aggregates and location.
+- Safety: the database is opened **read-only**, with file and network access disabled and settings locked. SQL from the LLM or the SQL editor must also pass a guard that allows only a single `SELECT`.
+
+## Live data and DuckDB locking
+
+DuckDB lets **only one process at a time** open a database file, even for reading. So by default the app opens the file only while a question runs and closes it after 2 s idle, which leaves room for your ingest process to write. I tested a separate writer appending batches while questions ran: both kept working, and new rows appeared in answers within seconds.
+
+For this to work, your **writer must open, append and close the file per batch**, for example every few seconds, rather than holding it open permanently. If it holds the file open, readers wait up to `LOCK_WAIT_MS` and then report that the file is locked. If nothing else writes the file, set `HOLD_DB_OPEN=true` for the best speed.
+
+The app checks the file every `RELOAD_CHECK_MS` (15 s). When the file has changed it clears cached answers and refreshes row counts, the time range and the sensor list. Large value lists such as aircraft addresses are rescanned every 10 minutes.
 
 ## Optional: local LLM for free-form questions
 
-The rule engine covers most analytical questions. For anything else, such as complex conditions, unusual wording or multi-step logic, run a local model:
-
 ```bash
-# Ollama (https://ollama.com). Pull while online, then it works offline
-ollama pull qwen2.5-coder:7b
-# the backend detects it automatically at http://127.0.0.1:11434
-```
-
-Or point the app at any OpenAI-compatible local server (llama.cpp `llama-server`, LM Studio, vLLM):
-
-```bash
+ollama pull qwen2.5-coder:7b       # once, while online; the backend detects it at http://127.0.0.1:11434
+# or any OpenAI-compatible local server:
 LLM_PROVIDER=openai LLM_BASE_URL=http://127.0.0.1:8080 LLM_MODEL=my-model npm start
 ```
 
-Set `LLM_PROVIDER=none` to use the rule engine only. Good SQL models: `qwen2.5-coder:7b` (on CPU), `qwen2.5-coder:14b` or `sqlcoder` (if you have a GPU).
+The model receives the table definition, including each column's ASTERIX meaning. Set `LLM_PROVIDER=none` to use the rule engine only.
 
 ## Configuration
 
@@ -104,58 +113,47 @@ Set these as environment variables, or copy `backend/config.example.json` to `ba
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `DB_PATH` | `data/machine.duckdb` | DuckDB file |
-| `TABLE` | `readings` | table to analyse |
-| `RELATIVE_TIME_ANCHOR` | `data` | "last 7 days" counts back from the newest row (`data`) or from the clock (`now`) |
-| `DATE_ORDER` | `dmy` | how `05/03/2025` is read (`dmy` or `mdy`) |
-| `DUCKDB_THREADS` | all cores | query parallelism |
-| `DUCKDB_MEMORY_LIMIT` | 75% of RAM | e.g. `8GB` |
-| `MAX_RESULT_ROWS` | `5000` | rows returned to the UI per answer |
-| `QUERY_TIMEOUT_MS` | `60000` | queries are cancelled after this |
-| `CACHE_SIZE` | `500` | cached query results |
-| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` | `ollama` / `http://127.0.0.1:11434` / `qwen2.5-coder:7b` | local LLM |
+| `DB_PATH` | `data/radar.duckdb` | DuckDB file |
+| `TABLE` | `radar_plots` | table or view to analyse; if it doesn't exist, the first table in the file is used |
+| `PD_TARGET` | `97` | probability-of-detection target (%) used to flag sensors |
+| `TRACK_GAP_S` | `60` | a track silent this long counts as ended (used for Pd and track statistics) |
+| `RADAR_DEFAULT_WINDOW_H` | `24` | hours covered by radar analyses when no period is given |
+| `RELOAD_CHECK_MS` | `15000` | how often to check the file for new data |
+| `HOLD_DB_OPEN` | `false` | keep the file open (only if no other process writes it) |
+| `IDLE_CLOSE_MS` / `LOCK_WAIT_MS` | `2000` / `20000` | close after idle; how long to wait for the writer's lock |
+| `COLUMN_ALIASES` | — | extra question words, e.g. `{"snr_db": ["snr"]}` |
+| `RELATIVE_TIME_ANCHOR` | `data` | "last 6 hours" counts back from the newest plot (`data`) or the clock (`now`) |
+| `DATE_ORDER` | `dmy` | how `05/03/2026` is read |
+| `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` | all cores / 75% RAM | query resources |
+| `MAX_RESULT_ROWS` / `QUERY_TIMEOUT_MS` | `5000` / `60000` | result size and time limits |
+| `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` | `ollama` / … / `qwen2.5-coder:7b` | optional local LLM |
 
-## Performance notes
+## Performance
 
-Measured on the 5 crore row sample (4 vCPU, 16 GB RAM):
+PERFORMANCE_TABLE
 
-| Question | Time |
-|---|---|
-| how many records are there | 3 ms |
-| daily average max value in Pune last 30 days | 16 ms |
-| top 5 machines with the most errors | 66 ms |
-| average max value by site | 90 ms |
-| correlation between min_value and max_value | 153 ms |
-| summary of max_value | 353 ms |
-| readings within 5 km of 18.52, 73.85 (+ total count) | 359 ms |
-| 95th percentile of max value for vibration sensors | 426 ms |
+## Other data
 
-To make it faster: use more CPU cores (DuckDB scales almost linearly), import sorted by time with `--time-column`, and store data on an SSD.
+The general engine works on any DuckDB table, such as the machine-readings sample:
+
+```bash
+npm run generate:machine            # 5 crore machine readings → backend/data/machine.duckdb
+DB_PATH=data/machine.duckdb TABLE=readings npm start
+```
+
+Use `npm run ingest` to import CSV, Parquet, Postgres, MySQL or SQLite into a DuckDB file. Run `node backend/scripts/ingest.js` without arguments for usage.
 
 ## API
 
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/ask` `{question, engine: "auto"\|"rules"\|"llm"}` | answer a question |
-| `POST /api/sql` `{sql}` | run a read-only SELECT (used by the SQL tab) |
-| `GET /api/schema` | columns, ranges, example questions, LLM status |
-| `GET /api/llm/status` | re-check the local LLM |
+| `POST /api/sql` `{sql}` | run a read-only SELECT (the SQL tab) |
+| `GET /api/schema` | columns with ASTERIX meaning, ranges, example questions, LLM status |
+| `GET /api/status` | row count, time range, data version (changes when new data arrives) |
 
-## Project layout
+## Tests
 
-```
-backend/
-  src/server.js            Express API + serves the built UI
-  src/db.js                DuckDB (read-only), connection pool, timeout, result cache
-  src/schema.js            schema detection + cached metadata
-  src/nlq/ruleParser.js    offline natural-language → SQL engine
-  src/nlq/time.js          date parsing / relative ranges
-  src/nlq/narrate.js       plain-English answers, chart inference
-  src/nlq/llm.js           optional local LLM (Ollama / OpenAI-compatible)
-  src/nlq/sqlGuard.js      read-only SQL guard
-  scripts/generate-sample-data.js, scripts/ingest.js
-  test/ruleParser.test.js  npm test
-frontend/
-  src/App.jsx              chat-style question/answer UI
-  src/components/          answer cards, SVG charts (line, bar, histogram, lat/long map), table + CSV export
+```bash
+npm test     # parser + radar analyses (runs each analysis on a small in-memory radar table)
 ```

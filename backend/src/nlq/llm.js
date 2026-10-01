@@ -55,12 +55,14 @@ function schemaPrompt(schema, anchor) {
     if (c.kind === 'category') extra = ` -- values: ${c.values.slice(0, 25).map((v) => `'${v}'`).join(', ')}${c.values.length > 25 ? ', ...' : ''}`;
     else if (c.kind === 'numeric' || c.kind === 'time') extra = ` -- range ${c.min} .. ${c.max}`;
     else if (c.kind === 'text') extra = ` -- free text, ~${c.distinct} distinct values`;
-    return `  "${c.name}" ${c.type}${extra}`;
+    const doc = c.description ? ` -- ${c.description}${c.standardItem ? ` [ASTERIX ${c.standardItem}]` : ''}` : '';
+    return `  "${c.name}" ${c.type}${doc}${extra}`;
   });
   const roles = [
     schema.timeColumn && `Timestamp column: "${schema.timeColumn}". "Now" / latest data = TIMESTAMP '${anchor}'.`,
     schema.latColumn && schema.lonColumn && `Location columns: "${schema.latColumn}" (latitude), "${schema.lonColumn}" (longitude). For distance in km use 2*6371*asin(sqrt(pow(sin(radians(lat2-lat1)/2),2)+cos(radians(lat1))*cos(radians(lat2))*pow(sin(radians(lon2-lon1)/2),2))).`,
   ].filter(Boolean);
+  if (schema.radar) roles.push('Each row is one radar target report (plot) following ASTERIX CAT048. 1 NM = 1.852 km, 1 FL = 100 ft. Emergency squawks: 7500 hijack, 7600 radio failure, 7700 emergency.');
   return `Table "${schema.table}" (${schema.rowCount} rows):\n${lines.join('\n')}\n${roles.join('\n')}`;
 }
 

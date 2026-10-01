@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "generate": "node scripts/generate-sample-data.js",
+    "generate:radar": "node scripts/generate-radar-data.js",
+    "generate:machine": "node scripts/generate-sample-data.js",
+    "generate": "node scripts/generate-radar-data.js",
     "ingest": "node scripts/ingest.js",
     "test": "node --test test/*.test.js"
   },

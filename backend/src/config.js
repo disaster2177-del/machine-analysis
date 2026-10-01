@@ -17,8 +17,8 @@ const env = (key, fallback) => process.env[key] ?? fileConfig[key] ?? fallback;
 
 export const config = {
   port: Number(env('PORT', 3001)),
-  dbPath: path.resolve(backendRoot, env('DB_PATH', 'data/machine.duckdb')),
-  table: env('TABLE', 'readings'),
+  dbPath: path.resolve(backendRoot, env('DB_PATH', 'data/radar.duckdb')),
+  table: env('TABLE', 'radar_plots'),
 
   // Column roles. Leave empty to auto-detect from the schema.
   timeColumn: env('TIME_COLUMN', ''),
@@ -51,6 +51,26 @@ export const config = {
     model: env('LLM_MODEL', 'qwen2.5-coder:7b'),
     timeoutMs: Number(env('LLM_TIMEOUT_MS', 120000)),
   },
+
+  // Extra words for columns, e.g. {"flight_level": ["alt"], "sensor_id": ["radar head"]}
+  columnAliases: (() => {
+    const v = env('COLUMN_ALIASES', {});
+    return typeof v === 'string' ? JSON.parse(v) : v;
+  })(),
+
+  // Radar analysis settings
+  radar: {
+    pdTarget: Number(env('PD_TARGET', 97)), // % probability of detection to flag sensors against
+    trackGapS: Number(env('TRACK_GAP_S', 60)), // a track silent this long is treated as a new track segment
+    defaultWindowH: Number(env('RADAR_DEFAULT_WINDOW_H', 24)), // radar analyses look at the last N hours unless a period is given
+  },
+
+  // Re-open the database when its file changes (new data written by your ingest process).
+  reloadCheckMs: Number(env('RELOAD_CHECK_MS', 15000)),
+  // Share the file with a writer process: close it after this much idle time (see db.js).
+  holdDbOpen: String(env('HOLD_DB_OPEN', 'false')) === 'true',
+  idleCloseMs: Number(env('IDLE_CLOSE_MS', 2000)),
+  lockWaitMs: Number(env('LOCK_WAIT_MS', 20000)),
 
   staticDir: path.resolve(backendRoot, env('STATIC_DIR', '../frontend/dist')),
 };

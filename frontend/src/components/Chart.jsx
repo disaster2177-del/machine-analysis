@@ -24,6 +24,7 @@ export default function Chart({ chart, rows, columns }) {
   if (chart.type === 'line') return <LineChart chart={chart} rows={rows} />;
   if (chart.type === 'bar') return <BarChart chart={chart} rows={rows} columns={columns} />;
   if (chart.type === 'map') return <MapChart chart={chart} rows={rows} />;
+  if (chart.type === 'polar') return <PolarChart chart={chart} rows={rows} />;
   return null;
 }
 
@@ -248,7 +249,8 @@ function BarChart({ chart, rows }) {
   const keys = chart.y.slice(0, 3);
   const shown = rows.slice(0, 30);
   const rowH = keys.length > 1 ? 14 * keys.length + 10 : 26;
-  const labelW = Math.min(180, Math.max(70, ...shown.map((r) => fmt(r[chart.x]).length * 7.2)));
+  const rowLabel = (r) => (chart.labels ? chart.labels.map((k) => fmt(r[k])).join(' · ') : fmt(r[chart.x]));
+  const labelW = Math.min(220, Math.max(70, ...shown.map((r) => rowLabel(r).length * 7.2)));
   const valueW = 80;
   const height = shown.length * rowH + 8;
   const max = Math.max(0, ...shown.flatMap((r) => keys.map((k) => r[k] ?? 0)));
@@ -266,7 +268,7 @@ function BarChart({ chart, rows }) {
             <g key={i} onMouseEnter={() => setHover({ r, px: labelW, py: y })}>
               <rect x="0" y={y} width={width} height={rowH} fill={hover?.r === r ? 'var(--hover)' : 'transparent'} />
               <text x={labelW - 8} y={y + rowH / 2} className="axis strong" textAnchor="end" dominantBaseline="middle">
-                {fmt(r[chart.x]).slice(0, 24)}
+                {rowLabel(r).slice(0, 30)}
               </text>
               {keys.map((k, j) => {
                 const v = r[k] ?? 0;
@@ -288,7 +290,7 @@ function BarChart({ chart, rows }) {
       </svg>
       {hover && (
         <Tooltip x={hover.px} y={hover.py} width={width}>
-          <div className="tt-title">{fmt(hover.r[chart.x])}</div>
+          <div className="tt-title">{rowLabel(hover.r)}</div>
           {keys.map((k, j) => (
             <div key={k} className="tt-row">
               <i style={{ background: SERIES_VARS[j] }} /> {label(k)} <b>{fmt(hover.r[k])}</b>
@@ -382,6 +384,110 @@ function MapChart({ chart, rows }) {
       <div className="muted small">
         {pts.length.toLocaleString('en-IN')} points plotted by latitude/longitude (offline — no map tiles).
       </div>
+    </div>
+  );
+}
+
+// Range-by-azimuth "coverage" diagram: north up, clockwise, one outline per sensor.
+function PolarChart({ chart, rows }) {
+  const [ref, width] = useWidth();
+  const [hover, setHover] = useState(null);
+  const size = Math.min(width, 520);
+  const c = size / 2;
+  const R = c - 28;
+  const groups = new Map();
+  for (const r of rows) {
+    const k = chart.series ? String(r[chart.series]) : 'all';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  const series = [...groups.entries()].slice(0, MAX_SERIES).map(([name, rs], i) => ({
+    name,
+    color: SERIES_VARS[i],
+    pts: rs.filter((r) => r[chart.radius] != null).sort((a, b) => a[chart.angle] - b[chart.angle]),
+  }));
+  const maxR = Math.max(1, ...series.flatMap((s) => s.pts.map((p) => p[chart.radius])));
+  const rings = niceTicks(0, maxR, 4).filter((t) => t > 0);
+  const rTop = rings.at(-1) ?? maxR;
+  const xy = (deg, r) => {
+    const a = (deg * Math.PI) / 180;
+    return [c + (r / rTop) * R * Math.sin(a), c - (r / rTop) * R * Math.cos(a)];
+  };
+  const onMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dx = e.clientX - rect.left - c;
+    const dy = e.clientY - rect.top - c;
+    if (Math.hypot(dx, dy) > R + 10) return setHover(null);
+    const deg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+    setHover({ deg, px: e.clientX - rect.left, py: e.clientY - rect.top });
+  };
+  const nearest = (s) => {
+    if (!hover || !s.pts.length) return null;
+    return s.pts.reduce((a, b) => {
+      const d = (p) => Math.min(Math.abs(p[chart.angle] - hover.deg), 360 - Math.abs(p[chart.angle] - hover.deg));
+      return d(b) < d(a) ? b : a;
+    });
+  };
+  return (
+    <div className="chart" ref={ref}>
+      <Legend items={series} />
+      <svg width={size} height={size} onMouseMove={onMove} onMouseLeave={() => setHover(null)} role="img">
+        {rings.map((t) => (
+          <g key={t}>
+            <circle cx={c} cy={c} r={(t / rTop) * R} fill="none" className="grid" />
+            <text x={c + 4} y={c - (t / rTop) * R - 3} className="axis">
+              {fmtCompact(t)}
+            </text>
+          </g>
+        ))}
+        {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((d) => {
+          const [x, y] = xy(d, rTop);
+          const [lx, ly] = xy(d, rTop * 1.09);
+          return (
+            <g key={d}>
+              <line x1={c} y1={c} x2={x} y2={y} className="grid" />
+              <text x={lx} y={ly} className="axis" textAnchor="middle" dominantBaseline="middle">
+                {{ 0: 'N', 90: 'E', 180: 'S', 270: 'W' }[d] ?? `${d}°`}
+              </text>
+            </g>
+          );
+        })}
+        {series.map((s) => (
+          <polygon
+            key={s.name}
+            points={s.pts.map((p) => xy(p[chart.angle], p[chart.radius]).join(',')).join(' ')}
+            fill={s.color}
+            fillOpacity="0.1"
+            stroke={s.color}
+            strokeWidth="2"
+            strokeLinejoin="round"
+          />
+        ))}
+        {hover && (
+          <line x1={c} y1={c} x2={xy(hover.deg, rTop)[0]} y2={xy(hover.deg, rTop)[1]} className="crosshair" />
+        )}
+        {hover &&
+          series.map((s) => {
+            const p = nearest(s);
+            if (!p) return null;
+            const [x, y] = xy(p[chart.angle], p[chart.radius]);
+            return <circle key={s.name} cx={x} cy={y} r="4" fill={s.color} stroke="var(--surface)" strokeWidth="2" />;
+          })}
+      </svg>
+      {hover && (
+        <Tooltip x={hover.px} y={hover.py} width={size}>
+          <div className="tt-title">Azimuth ≈ {Math.round(hover.deg)}°</div>
+          {series.map((s) => {
+            const p = nearest(s);
+            return p ? (
+              <div key={s.name} className="tt-row">
+                <i style={{ background: s.color }} /> {s.name} <b>{fmt(p[chart.radius])}</b>
+              </div>
+            ) : null;
+          })}
+        </Tooltip>
+      )}
+      <div className="muted small">{label(chart.radius)} by azimuth sector (north up, clockwise).</div>
     </div>
   );
 }

@@ -520,3 +520,11 @@ tbody tr:hover {
     padding: 10px 16px 14px;
   }
 }
+
+.link.live {
+  color: var(--text-2);
+}
+.link.live.on {
+  color: var(--good);
+  font-weight: 600;
+}

@@ -2,17 +2,46 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
-import { openDatabase, query } from './db.js';
-import { loadSchema, publicSchema } from './schema.js';
+import { fileSignature, openDatabase, query, reloadIfChanged } from './db.js';
+import { loadSchema, publicSchema, refreshSchema } from './schema.js';
 import { parseQuestion } from './nlq/ruleParser.js';
 import { guardSql } from './nlq/sqlGuard.js';
 import { generateSql, llmStatus, summarize } from './nlq/llm.js';
 import { inferChart, narrate } from './nlq/narrate.js';
 import { suggestQuestions } from './nlq/suggestions.js';
+import { matchRadarAnalysis } from './radar/analytics.js';
 
 const t0 = Date.now();
 await openDatabase();
-const schema = await loadSchema();
+let schema = await loadSchema();
+let lastFullScan = Date.now();
+let dataVersion = 1;
+let reloadedAt = new Date().toISOString();
+let seenSignature = fileSignature();
+
+// Pick up new data written to the DuckDB file by your ingest process.
+let reloading = false;
+setInterval(async () => {
+  if (reloading) return;
+  reloading = true;
+  try {
+    const sig = fileSignature();
+    if (sig !== seenSignature) {
+      seenSignature = sig;
+      await reloadIfChanged();
+      const full = Date.now() - lastFullScan > 10 * 60 * 1000;
+      schema = full ? await loadSchema() : await refreshSchema(schema);
+      if (full) lastFullScan = Date.now();
+      dataVersion++;
+      reloadedAt = new Date().toISOString();
+      console.log(`Database changed: reloaded (${schema.rowCount.toLocaleString('en-IN')} rows, latest ${schema.timeRange?.max ?? '-'})`);
+    }
+  } catch (err) {
+    console.warn(`Reload skipped: ${err.message}`);
+  } finally {
+    reloading = false;
+  }
+}, config.reloadCheckMs).unref();
 console.log(`Loaded table "${schema.table}": ${schema.rowCount.toLocaleString('en-IN')} rows, ${schema.columns.length} columns (${Date.now() - t0} ms)`);
 
 const parseOptions = {
@@ -28,6 +57,10 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.get('/api/schema', async (_req, res) => {
   res.json({ ...publicSchema(schema), suggestions: suggestQuestions(schema), llm: await llmStatus() });
+});
+
+app.get('/api/status', (_req, res) => {
+  res.json({ rowCount: schema.rowCount, timeRange: schema.timeRange, dataVersion, reloadedAt });
 });
 
 app.get('/api/llm/status', async (_req, res) => res.json(await llmStatus(true)));
@@ -56,6 +89,29 @@ app.post('/api/ask', async (req, res) => {
     const plan = parseQuestion(question, schema, parseOptions);
     const parseMs = +(performance.now() - p0).toFixed(2);
     const notes = [...plan.notes];
+
+    // Radar surveillance analyses (Pd, scan period, gaps, bias, emergencies, ...)
+    const radar = engine !== 'llm' ? matchRadarAnalysis(question, schema, plan) : null;
+    if (radar?.error) return res.status(400).json({ error: radar.error });
+    if (radar) {
+      const result = await query(radar.sql);
+      if (radar.postprocess) result.rows = radar.postprocess(result.rows);
+      if (radar.postprocess && result.rows[0]) result.columns = [{ name: Object.keys(result.rows[0])[0], type: 'VARCHAR' }, ...result.columns];
+      return res.json({
+        question,
+        engine: 'rules',
+        analysis: radar.id,
+        answer: radar.narrate(result.rows),
+        interpretation: radar.interpretation,
+        sql: radar.sql,
+        confidence: 'high',
+        unknownWords: [],
+        chart: radar.chart,
+        ...result,
+        notes: [...notes, ...(radar.notes ?? [])],
+        timings: { parseMs, queryMs: result.ms },
+      });
+    }
 
     const llm = engine === 'rules' || (engine === 'auto' && plan.confidence === 'high') ? null : await llmStatus();
     const useLlm = engine === 'llm' || (engine === 'auto' && plan.confidence !== 'high' && llm?.available);

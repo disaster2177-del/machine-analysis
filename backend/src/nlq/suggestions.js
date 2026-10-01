@@ -1,5 +1,38 @@
 // Example questions built from the actual schema, shown in the UI as one-click prompts.
+// Midpoint of the lat/lon range: a reasonable default location to ask about.
+function busiestPoint(schema) {
+  const lat = schema.columns.find((c) => c.name === schema.latColumn);
+  const lon = schema.columns.find((c) => c.name === schema.lonColumn);
+  return `${((Number(lat.min) + Number(lat.max)) / 2).toFixed(2)}, ${((Number(lon.min) + Number(lon.max)) / 2).toFixed(2)}`;
+}
+
+function radarQuestions(schema) {
+  const sensors = schema.columns.find((c) => c.name === 'sensor_id')?.values ?? [];
+  const s1 = sensors[0] ?? 'Mumbai';
+  const s2 = sensors[1] ?? 'Pune';
+  const has = (n) => schema.columns.some((c) => c.name === n);
+  return [
+    'Sensor status',
+    'Probability of detection by sensor',
+    'Scan period of each radar',
+    'Data gaps longer than 60 seconds',
+    has('aircraft_address') && 'Registration bias between sensors',
+    has('mode3a') && 'Any emergency squawks?',
+    `Coverage of ${s1} radar`,
+    'Track statistics per sensor',
+    has('flight_level') && 'Altitude jumps',
+    has('mode3a') && 'Which aircraft changed their squawk code?',
+    has('received_at') && 'Latency by sensor',
+    'Clutter and false plots by sensor',
+    'Hourly plot count by sensor',
+    has('aircraft_address') && `How many aircraft did ${s2} radar see?`,
+    'Count by report type for each sensor',
+    has('flight_level') && has('lat') && `Plots below FL 50 within 30 km of ${busiestPoint(schema)}`,
+  ].filter(Boolean);
+}
+
 export function suggestQuestions(schema) {
+  if (schema.radar) return radarQuestions(schema);
   const cols = schema.columns;
   const geo = [schema.latColumn, schema.lonColumn];
   const nums = cols.filter((c) => c.kind === 'numeric' && !geo.includes(c.name)).map((c) => c.name);

@@ -9,7 +9,7 @@ function RichText({ text }) {
   );
 }
 
-export default function AnswerCard({ item, onRunSql, onAskAgain, llm }) {
+export default function AnswerCard({ item, onRunSql, onAskAgain, onToggleLive, llm }) {
   const r = item.response;
   const hasChart = r && r.chart && r.chart.type !== 'table' && r.rows?.length > (r.chart.type === 'map' ? 1 : 0);
   const [view, setView] = useState(null);
@@ -45,6 +45,12 @@ export default function AnswerCard({ item, onRunSql, onAskAgain, llm }) {
               {r.rows.length.toLocaleString('en-IN')} row{r.rows.length === 1 ? '' : 's'}
               {r.truncated ? ' (truncated)' : ''}
             </span>
+            {r.engine !== 'sql' && (
+              <button className={`link live ${item.live ? 'on' : ''}`} onClick={onToggleLive} title="Re-run automatically when new data arrives">
+                {item.live ? '● Live' : '○ Live'}
+              </button>
+            )}
+            {item.live && item.updatedAt && <span className="muted small">updated {item.updatedAt.toLocaleTimeString()}</span>}
             {r.engine === 'rules' && llm?.available && (
               <button className="link" onClick={() => onAskAgain(item.question, 'llm')}>
                 ask the local LLM instead

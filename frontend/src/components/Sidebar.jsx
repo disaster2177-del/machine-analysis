@@ -3,12 +3,12 @@ import { crore, fmt } from '../format.js';
 
 const KIND_LABEL = { time: 'time', numeric: 'number', category: 'category', text: 'text', boolean: 'bool', other: 'other' };
 
-export default function Sidebar({ schema, error, onPick, history, onRefreshLlm }) {
+export default function Sidebar({ schema, status, error, onPick, history, onRefreshLlm }) {
   const [tab, setTab] = useState('examples');
   if (error) {
     return (
       <aside className="sidebar">
-        <div className="brand">Machine Analysis</div>
+        <div className="brand">Analysis</div>
         <div className="error">Cannot reach the backend: {error}</div>
       </aside>
     );
@@ -16,25 +16,29 @@ export default function Sidebar({ schema, error, onPick, history, onRefreshLlm }
   if (!schema) {
     return (
       <aside className="sidebar">
-        <div className="brand">Machine Analysis</div>
+        <div className="brand">Analysis</div>
         <div className="muted">Loading dataset…</div>
       </aside>
     );
   }
   const { llm } = schema;
+  const rowCount = status?.rowCount ?? schema.rowCount;
+  const timeRange = status?.timeRange ?? schema.timeRange;
   return (
     <aside className="sidebar">
-      <div className="brand">Machine Analysis</div>
+      <div className="brand">{schema.radar ? 'Radar Analysis' : 'Machine Analysis'}</div>
       <div className="dataset">
-        <div className="big">{crore(schema.rowCount)}</div>
+        <div className="big">{crore(rowCount)}</div>
         <div className="muted">
           rows in <code>{schema.table}</code>
         </div>
-        {schema.timeRange && (
+        {timeRange && (
           <div className="muted small">
-            {fmt(schema.timeRange.min)} → {fmt(schema.timeRange.max)}
+            {fmt(timeRange.min)} → {fmt(timeRange.max)}
           </div>
         )}
+        {schema.radar && <div className="muted small">ASTERIX CAT048 radar plots</div>}
+        {status?.reloadedAt && <div className="muted small">data loaded {new Date(status.reloadedAt).toLocaleTimeString()} · auto-refresh on</div>}
         <div className={`llm ${llm?.available ? 'on' : 'off'}`} title={llm?.error ?? ''}>
           <span className="dot" /> {llm?.available ? `Local LLM: ${llm.model}` : 'Rule engine only (no local LLM)'}
           <button className="link" onClick={onRefreshLlm} title="Check again">
@@ -71,6 +75,12 @@ export default function Sidebar({ schema, error, onPick, history, onRefreshLlm }
                 <code>{c.name}</code>
                 <span className={`kind ${c.kind}`}>{KIND_LABEL[c.kind] ?? c.kind}</span>
               </div>
+              {c.description && (
+                <div className="small">
+                  {c.description}
+                  {c.standardItem && <span className="muted"> · {c.standardItem}</span>}
+                </div>
+              )}
               <div className="muted small">
                 {c.kind === 'numeric' && `${fmt(c.min)} … ${fmt(c.max)}`}
                 {c.kind === 'time' && `${fmt(c.min)} … ${fmt(c.max)}`}

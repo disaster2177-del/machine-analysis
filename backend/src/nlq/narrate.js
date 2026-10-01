@@ -108,10 +108,12 @@ export function narrate(plan, result, totalCount) {
 
   if (y && chart.x) {
     const top = rows[0];
+    const lab = (r) => (chart.labels ? chart.labels.map((k) => fmt(r[k])).join(' · ') : fmt(r[chart.x]));
+    const groupWord = chart.labels ? 'groups' : `${chart.x} value${rows.length === 1 ? '' : 's'}`;
     const desc = !/ASC/.test(plan.sql);
-    const others = rows.slice(1, 3).map((r) => `${fmt(r[chart.x])} (${fmt(r[y])})`);
+    const others = rows.slice(1, 3).map((r) => `${lab(r)} (${fmt(r[y])})`);
     const last = rows.at(-1);
-    return `**${fmt(top[chart.x])}** is ${desc ? 'highest' : 'lowest'} (${label(y)}: **${fmt(top[y])}**)${others.length ? `, followed by ${others.join(' and ')}` : ''}.${rows.length > 3 ? ` ${desc ? 'Lowest' : 'Highest'} shown: ${fmt(last[chart.x])} (${fmt(last[y])}).` : ''} ${rows.length} ${chart.x} value${rows.length === 1 ? '' : 's'} in total.`;
+    return `**${lab(top)}** is ${desc ? 'highest' : 'lowest'} (${label(y)}: **${fmt(top[y])}**)${others.length ? `, followed by ${others.join(' and ')}` : ''}.${rows.length > 3 ? ` ${desc ? 'Lowest' : 'Highest'} shown: ${lab(last)} (${fmt(last[y])}).` : ''} ${rows.length} ${groupWord} in total.`;
   }
   return `${rows.length} rows returned.`;
 }

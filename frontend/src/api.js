@@ -12,4 +12,5 @@ async function call(path, body) {
 export const getSchema = () => call('/schema');
 export const ask = (question, engine) => call('/ask', { question, engine });
 export const runSql = (sql) => call('/sql', { sql });
+export const getStatus = () => call('/status');
 export const getLlmStatus = () => call('/llm/status');

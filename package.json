@@ -2,15 +2,17 @@
   "name": "machine-analysis",
   "version": "1.0.0",
   "private": true,
-  "description": "Offline natural-language analytics over crores of machine readings (React + Node.js + DuckDB)",
+  "description": "Offline natural-language analytics over crores of radar (ASTERIX CAT048) or machine records (React + Node.js + DuckDB)",
   "scripts": {
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
-    "generate": "npm --prefix backend run generate --",
+    "generate": "npm --prefix backend run generate:radar --",
     "ingest": "npm --prefix backend run ingest --",
     "build": "npm --prefix frontend run build",
     "start": "npm --prefix backend start",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "test": "npm --prefix backend test"
+    "test": "npm --prefix backend test",
+    "generate:radar": "npm --prefix backend run generate:radar --",
+    "generate:machine": "npm --prefix backend run generate:machine --"
   }
 }

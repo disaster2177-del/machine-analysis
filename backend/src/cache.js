@@ -19,4 +19,8 @@ export class LruCache {
     this.map.set(key, value);
     if (this.map.size > this.limit) this.map.delete(this.map.keys().next().value);
   }
+
+  clear() {
+    this.map.clear();
+  }
 }
