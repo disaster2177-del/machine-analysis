@@ -130,7 +130,24 @@ Set these as environment variables, or copy `backend/config.example.json` to `ba
 
 ## Performance
 
-PERFORMANCE_TABLE
+Measured on the simulated dataset: **4.28 crore plots** (5 sensors, 11 days, 1.9 GB DuckDB file), on a 4-vCPU / 16 GB machine. Each timing is the first run; repeated questions are answered from cache.
+
+| Question | Time |
+|---|---|
+| Sensor status | 58 ms |
+| How many plots per sensor? | 68 ms |
+| Latency by sensor | 110 ms |
+| Coverage of all radars | 144 ms |
+| How many aircraft did Mumbai radar see? (all 11 days) | 344 ms |
+| Plots below FL 50 within 30 km of 19.09, 72.87 (+ total count) | 393 ms |
+| Registration bias between sensors (24 h) | 620 ms |
+| Scan period of each radar (24 h) | 890 ms |
+| Probability of detection by sensor (24 h) | 1.2 s |
+| Data gaps longer than 60 seconds (all 11 days) | 2.5 s |
+| Track statistics per sensor (24 h) | 2.5 s |
+| Probability of detection by sensor (**all time**, 4.28 crore plots) | 22 s |
+
+Analyses that follow tracks plot by plot (Pd, track statistics, gaps) use window functions, so their cost grows with the period analysed. That is why radar analyses default to the last 24 hours. More CPU cores make DuckDB faster almost linearly.
 
 ## Other data
 

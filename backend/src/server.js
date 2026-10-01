@@ -97,11 +97,15 @@ app.post('/api/ask', async (req, res) => {
       const result = await query(radar.sql);
       if (radar.postprocess) result.rows = radar.postprocess(result.rows);
       if (radar.postprocess && result.rows[0]) result.columns = [{ name: Object.keys(result.rows[0])[0], type: 'VARCHAR' }, ...result.columns];
+      const limit = Number(radar.sql.match(/LIMIT (\d+)\s*$/)?.[1]);
+      const capped = limit && result.rows.length >= limit;
+      let answer = radar.narrate(result.rows);
+      if (capped) answer = answer.replace(/\*\*(\d[\d,]*) /, '**at least $1 ');
       return res.json({
         question,
         engine: 'rules',
         analysis: radar.id,
-        answer: radar.narrate(result.rows),
+        answer: capped ? `${answer} (Only the first ${limit} are listed; add a sensor or period to narrow it down.)` : answer,
         interpretation: radar.interpretation,
         sql: radar.sql,
         confidence: 'high',

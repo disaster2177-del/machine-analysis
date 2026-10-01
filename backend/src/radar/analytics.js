@@ -190,13 +190,23 @@ FROM polar GROUP BY sensor_a, sensor_b HAVING count(*) >= 20 ORDER BY abs(azimut
       narrate: (rows) => {
         if (!rows.length) return 'No aircraft were seen by two sensors at the same time in this period, so bias cannot be estimated.';
         const top = rows[0];
-        // The misaligned sensor shows a large bias against every sensor it overlaps with.
-        const per = {};
-        for (const r of rows) {
-          for (const s of [r.sensor_a, r.sensor_b]) (per[s] ??= []).push(Math.abs(r.azimuth_bias_deg));
-        }
-        const score = Object.entries(per).map(([s, v]) => [s, v.reduce((a, b) => a + b, 0) / v.length]).sort((a, b) => b[1] - a[1]);
-        const suspect = score.length > 2 && score[0][1] > 1.5 * score[1][1] ? ` **${score[0][0]} is the likely misaligned sensor** (average |azimuth bias| ${fmt(score[0][1])}° against its neighbours vs ${fmt(score[1][1])}° for the next).` : '';
+        // A misaligned sensor shows a large bias in every pair it is part of, while pairs
+        // without it agree. Compare each sensor's pairs with all the other pairs.
+        const sensors = [...new Set(rows.flatMap((r) => [r.sensor_a, r.sensor_b]))];
+        const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+        const scored = sensors
+          .map((sn) => {
+            const inside = rows.filter((r) => r.sensor_a === sn || r.sensor_b === sn).map((r) => Math.abs(r.azimuth_bias_deg));
+            const outside = rows.filter((r) => r.sensor_a !== sn && r.sensor_b !== sn).map((r) => Math.abs(r.azimuth_bias_deg));
+            return { sn, inside: mean(inside), outside: outside.length ? mean(outside) : null };
+          })
+          .filter((x) => x.outside !== null)
+          .sort((a, b) => b.inside - b.outside - (a.inside - a.outside));
+        const best = scored[0];
+        const suspect =
+          best && best.inside >= 0.05 && best.inside > 2.5 * best.outside
+            ? ` **${best.sn} is the likely misaligned sensor:** pairs with it differ by ${fmt(best.inside)}° on average, pairs without it by ${fmt(best.outside)}°.`
+            : '';
         return `Largest relative registration error: **${top.sensor_a} vs ${top.sensor_b}: azimuth ${fmt(top.azimuth_bias_deg)}°, range ${fmt(top.range_bias_m)} m** (${fmt(top.matched_plots)} matched plots).${suspect} ${rows.length} sensor pairs compared.`;
       },
       notes: ['Bias is relative: the same Mode S aircraft seen by two sensors within 2 s, with the second plot moved to the first plot\'s time using its speed and heading, then compared in the first sensor\'s range/azimuth.'],
