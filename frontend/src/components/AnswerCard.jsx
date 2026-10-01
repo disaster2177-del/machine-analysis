@@ -11,7 +11,7 @@ function RichText({ text }) {
 
 export default function AnswerCard({ item, onRunSql, onAskAgain, llm }) {
   const r = item.response;
-  const hasChart = r && r.chart && r.chart.type !== 'table' && r.rows?.length > 0;
+  const hasChart = r && r.chart && r.chart.type !== 'table' && r.rows?.length > (r.chart.type === 'map' ? 1 : 0);
   const [view, setView] = useState(null);
   const [sql, setSql] = useState(null);
   const current = view ?? (hasChart ? 'chart' : 'table');
