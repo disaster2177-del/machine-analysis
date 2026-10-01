@@ -1,0 +1,7 @@
+node_modules/
+frontend/dist/
+backend/data/*.duckdb
+backend/data/*.duckdb.wal
+backend/data/*.meta.json
+backend/config.json
+.DS_Store

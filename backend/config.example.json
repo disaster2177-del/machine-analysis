@@ -1,0 +1,13 @@
+{
+  "DB_PATH": "data/machine.duckdb",
+  "TABLE": "readings",
+  "TIME_COLUMN": "",
+  "LAT_COLUMN": "",
+  "LON_COLUMN": "",
+  "RELATIVE_TIME_ANCHOR": "data",
+  "DATE_ORDER": "dmy",
+  "LLM_PROVIDER": "ollama",
+  "LLM_BASE_URL": "http://127.0.0.1:11434",
+  "LLM_MODEL": "qwen2.5-coder:7b",
+  "PORT": 3001
+}

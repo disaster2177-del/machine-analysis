@@ -1,0 +1,18 @@
+{
+  "name": "machine-analysis-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "generate": "node scripts/generate-sample-data.js",
+    "ingest": "node scripts/ingest.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "^1.5.6-r.1",
+    "express": "^5.2.1"
+  }
+}
