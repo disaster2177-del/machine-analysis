@@ -94,6 +94,20 @@ split_hp() {  # "host:port" -> HP_HOST HP_PORT
 # shellcheck disable=SC2016  # $0/$1 expand in the child bash
 tcp_open() { timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2" 2>/dev/null; }
 
+# OPEN, REFUSED (host is up, nothing listening on the port) or NO_ANSWER.
+# shellcheck disable=SC2016
+tcp_state() {
+  local err
+  err="$(timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2" 2>&1)"
+  case $? in
+    0) echo OPEN ;;
+    124) echo NO_ANSWER ;;
+    *) if grep -qi 'refused' <<<"$err"; then echo REFUSED; else echo NO_ANSWER; fi ;;
+  esac
+}
+
+icmp_ok() { command -v ping >/dev/null 2>&1 && ping -c 1 -W 2 "$1" >/dev/null 2>&1; }
+
 detect_shell() {
   if [[ -n $MONGO_SHELL ]]; then
     command -v "$MONGO_SHELL" >/dev/null 2>&1 || return 1
@@ -247,12 +261,28 @@ if ! detect_shell; then
   finish 3
 fi
 
-if ! tcp_open "$SEED_IP" "$SEED_PORT"; then
-  log "Deployment: unknown"
-  table_header
-  node_row "$SEED_IP:$SEED_PORT" "-" DOWN "port not reachable"
-  finish 2
-fi
+case "$(tcp_state "$SEED_IP" "$SEED_PORT")" in
+  OPEN)
+    log "Server: UP (port $SEED_PORT open)" ;;
+  REFUSED)
+    log "Server: UP (connection to port $SEED_PORT refused)"
+    log "Deployment: unknown"
+    table_header
+    node_row "$SEED_IP:$SEED_PORT" "-" DOWN "MongoDB is not running on port $SEED_PORT"
+    finish 2 ;;
+  *)
+    if icmp_ok "$SEED_IP"; then
+      log "Server: UP (answers ping)"
+      remark="MongoDB port $SEED_PORT not answering (mongod down/hung or firewall)"
+    else
+      log "Server: DOWN or unreachable (no ping reply, port $SEED_PORT not answering)"
+      remark="server not reachable"
+    fi
+    log "Deployment: unknown"
+    table_header
+    node_row "$SEED_IP:$SEED_PORT" "-" DOWN "$remark"
+    finish 2 ;;
+esac
 
 mongo_run "$SEED_IP" "$SEED_PORT" "$JS_CHECK" "$MONGO_USER" "$MONGO_PASS"
 if ! grep -q '^PING|1' <<<"$MONGO_OUT"; then

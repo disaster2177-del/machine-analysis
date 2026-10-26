@@ -25,6 +25,7 @@ Example output (also written to `logs/mongo_health_192.168.1.50_20261026_103000.
 ```
 2026-10-26 10:30:00 MongoDB status check started - target 192.168.1.50:27017
 2026-10-26 10:30:00 Log file: .../logs/mongo_health_192.168.1.50_20261026_103000.log
+2026-10-26 10:30:00 Server: UP (port 27017 open)
 2026-10-26 10:30:01 Deployment: REPLICA SET (rs0)
 2026-10-26 10:30:01 NODE                     ROLE           STATUS REMARK
 2026-10-26 10:30:01 192.168.1.50:27017       PRIMARY        UP
@@ -38,7 +39,10 @@ Example output (also written to `logs/mongo_health_192.168.1.50_20261026_103000.
 
 1. Asks for the IP and checks that it is a valid IPv4 address.
 2. Opens a log file in `logs/` and copies everything it prints into it.
-3. Tests that the MongoDB port is open, then connects and runs `ping`.
+3. Tests the MongoDB port. *Connection refused* means the server is up but MongoDB is
+   not running. No answer means the server is down or unreachable, or, if the server
+   still answers ping, that MongoDB is hung or blocked by a firewall. Then it connects
+   and runs `ping`.
 4. Detects the deployment type with the `hello` command:
    - **Standalone**: one row for the server.
    - **Replica set**: one row per member from `rs.status()` (PRIMARY / SECONDARY /
