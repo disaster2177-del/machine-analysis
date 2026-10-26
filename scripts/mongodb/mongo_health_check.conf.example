@@ -1,0 +1,24 @@
+# Copy to mongo_health_check.conf (same folder) and fill in only what you need.
+# Keep it private:  chmod 600 mongo_health_check.conf
+
+#MONGO_PORT=27017
+
+# Only when MongoDB has authentication enabled. A user with the read-only
+# "clusterMonitor" role is enough.
+#MONGO_USER="monitor"
+#MONGO_PASS="secret"
+#MONGO_AUTH_DB="admin"
+
+# Sharded clusters only: user that exists on the shards themselves.
+#SHARD_USER=""
+#SHARD_PASS=""
+
+# TLS
+#MONGO_TLS=1
+#MONGO_TLS_CA="/etc/ssl/mongo-ca.pem"
+#MONGO_TLS_INSECURE=0
+
+#MONGO_SHELL="mongosh"        # or "mongo" (legacy shell)
+#TIMEOUT_SECS=10
+#LOG_DIR="/var/log/mongo_health"
+#LOG_RETENTION_DAYS=30
