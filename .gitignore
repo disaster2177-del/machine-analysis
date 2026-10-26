@@ -5,3 +5,5 @@ backend/data/*.duckdb.wal
 backend/data/*.meta.json
 backend/config.json
 .DS_Store
+scripts/mongodb/logs/
+scripts/mongodb/mongo_health_check.conf
